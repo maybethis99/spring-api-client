@@ -1171,7 +1171,16 @@ function useApi(baseUrl, token) {
     return ct.includes("json") ? res.json() : res.text();
   }, [baseUrl, token]);
 
-  return useMemo(() => ({ get, post, del }), [get, post, del]);
+  const upload = useCallback(async (path, formData) => {
+    const url = baseUrl.replace(/\/$/, "") + path;
+    const headers = token ? { "Authorization": `Bearer ${token}` } : {};
+    const res = await fetch(url, { method: "POST", headers, body: formData });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const ct = res.headers.get("content-type") || "";
+    return ct.includes("json") ? res.json() : res.text();
+  }, [baseUrl, token]);
+
+  return useMemo(() => ({ get, post, del, upload }), [get, post, del, upload]);
 }
 
 function formatDate(val) {
@@ -1362,7 +1371,7 @@ function NewsFeed({ api, onThread }) {
 }
 
 // ─── FORM: CREATE THREAD ─────────────────────────────────────────────────────
-function CreateThreadForm({ api, boardId, onCreated, baseUrl }) {
+function CreateThreadForm({ api, boardId, onCreated }) {
   const [open, setOpen] = useState(false);
   const [title, setTitle] = useState("");
   const [content, setContent] = useState("");
@@ -1414,7 +1423,7 @@ function CreateThreadForm({ api, boardId, onCreated, baseUrl }) {
       if (image && threadId) {
         const fd = new FormData();
         fd.append("image", image);
-        await fetch(`${baseUrl.replace(/\/$/, "")}/threads/${threadId}/image`, { method: "POST", body: fd });
+        try { await api.upload(`/threads/${threadId}/image`, fd); } catch (e) { console.warn("Image upload:", e.message); }
       }
       setOk(true);
       setTitle(""); setContent(""); setAuthor(""); setUserId(""); clearImage();
@@ -1482,7 +1491,7 @@ function CreateThreadForm({ api, boardId, onCreated, baseUrl }) {
             <button className="form-btn primary" data-testid="thread-submit-btn" onClick={submit} disabled={loading}>
               {loading ? "Отправка..." : "Создать тред"}
             </button>
-            {err && <span className="form-error" data-testid="thread-form-error">{err}</span>}
+            {err && <span className="form-error" data-testid="thread-form-error">{err.includes("403") ? "403 — нет доступа. Войдите в систему." : err}</span>}
             {ok && <span className="form-ok" data-testid="thread-form-ok">✓ Тред создан</span>}
           </div>
         </>
@@ -1492,7 +1501,7 @@ function CreateThreadForm({ api, boardId, onCreated, baseUrl }) {
 }
 
 // ─── FORM: REPLY POST ────────────────────────────────────────────────────────
-function ReplyForm({ api, threadId, replyTo, replyToPost, onClearReply, onCreated, baseUrl }) {
+function ReplyForm({ api, threadId, replyTo, replyToPost, onClearReply, onCreated }) {
   const [open, setOpen] = useState(true);
   const [content, setContent] = useState(replyTo ? `>>${replyTo}\n` : "");
   const [author, setAuthor] = useState("");
@@ -1553,7 +1562,7 @@ function ReplyForm({ api, threadId, replyTo, replyToPost, onClearReply, onCreate
       if (image && postId) {
         const fd = new FormData();
         fd.append("image", image);
-        await fetch(`${baseUrl.replace(/\/$/, "")}/posts/${postId}/image`, { method: "POST", body: fd });
+        try { await api.upload(`/posts/${postId}/image`, fd); } catch (e) { console.warn("Image upload:", e.message); }
       }
       setOk(true);
       setContent(""); setAuthor(""); setUserId(""); clearImage();
@@ -1616,7 +1625,7 @@ function ReplyForm({ api, threadId, replyTo, replyToPost, onClearReply, onCreate
             <button className="form-btn primary" data-testid="reply-submit-btn" onClick={submit} disabled={loading}>
               {loading ? "Отправка..." : "Отправить"}
             </button>
-            {err && <span className="form-error" data-testid="reply-form-error">{err}</span>}
+            {err && <span className="form-error" data-testid="reply-form-error">{err.includes("403") ? "403 — нет доступа. Войдите в систему." : err}</span>}
             {ok && <span className="form-ok" data-testid="reply-form-ok">✓ Отправлено</span>}
           </div>
         </>
@@ -1771,7 +1780,7 @@ function Pagination({ page, totalPages, loading, onPage, maxButtons = Infinity }
 }
 
 // ─── BOARD PAGE ──────────────────────────────────────────────────────────────
-function BoardPage({ api, board, onThread, baseUrl }) {
+function BoardPage({ api, board, onThread }) {
   const [threads, setThreads] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -1807,7 +1816,7 @@ function BoardPage({ api, board, onThread, baseUrl }) {
       </div>
 
       {/* Форма создания треда */}
-      <CreateThreadForm api={api} boardId={board.id} onCreated={load} baseUrl={baseUrl} />
+      <CreateThreadForm api={api} boardId={board.id} onCreated={load} />
 
       <div className="section-label">треды</div>
       {loading && <LoadingBlock />}
@@ -1847,7 +1856,7 @@ function BoardPage({ api, board, onThread, baseUrl }) {
 }
 
 // ─── THREAD PAGE ─────────────────────────────────────────────────────────────
-function ThreadPage({ api, thread, baseUrl }) {
+function ThreadPage({ api, thread }) {
   const [posts, setPosts] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -1907,7 +1916,6 @@ function ThreadPage({ api, thread, baseUrl }) {
         replyToPost={replyToPost}
         onClearReply={() => setReplyTo(null)}
         onCreated={() => load(page)}
-        baseUrl={baseUrl}
       />
 
       <div className="section-label">посты</div>
@@ -2388,8 +2396,8 @@ export default function App() {
       </div>
 
       {view === "home"   && <HomePage   api={api} onBoard={goBoard} onThread={goThread} />}
-      {view === "board"  && currentBoard  && <BoardPage  api={api} board={currentBoard}   onThread={goThread} baseUrl={baseUrl} />}
-      {view === "thread" && currentThread && <ThreadPage api={api} thread={currentThread} baseUrl={baseUrl} />}
+      {view === "board"  && currentBoard  && <BoardPage  api={api} board={currentBoard}   onThread={goThread} />}
+      {view === "thread" && currentThread && <ThreadPage api={api} thread={currentThread} />}
       {view === "users"  && <UsersPage   api={api} />}
       {view === "admin"  && <AdminPanel baseUrl={baseUrl} setBaseUrl={setBaseUrl} token={token} />}
     </>
